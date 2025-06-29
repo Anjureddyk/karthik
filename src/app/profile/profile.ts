@@ -105,6 +105,15 @@ import { AuthService, User } from '../auth/auth.service';
                         <mat-error *ngIf="profileForm.get('fullName')?.hasError('required')">
                           Full name is required
                         </mat-error>
+                        <mat-error *ngIf="profileForm.get('fullName')?.hasError('invalidName')">
+                          Full name can only contain letters, spaces, apostrophes, and hyphens
+                        </mat-error>
+                        <mat-error *ngIf="profileForm.get('fullName')?.hasError('nameTooShort')">
+                          Full name must be at least 2 characters long
+                        </mat-error>
+                        <mat-error *ngIf="profileForm.get('fullName')?.hasError('nameTooLong')">
+                          Full name must be less than 50 characters
+                        </mat-error>
                       </mat-form-field>
                     </div>
 
@@ -116,8 +125,8 @@ import { AuthService, User } from '../auth/auth.service';
                         <mat-error *ngIf="profileForm.get('email')?.hasError('required')">
                           Email is required
                         </mat-error>
-                        <mat-error *ngIf="profileForm.get('email')?.hasError('email')">
-                          Please enter a valid email
+                        <mat-error *ngIf="profileForm.get('email')?.hasError('invalidEmail')">
+                          Please enter a valid email address
                         </mat-error>
                       </mat-form-field>
                     </div>
@@ -125,8 +134,19 @@ import { AuthService, User } from '../auth/auth.service';
                     <div class="form-row">
                       <mat-form-field appearance="outline" class="full-width">
                         <mat-label>Phone Number</mat-label>
-                        <input matInput formControlName="phone" placeholder="Enter your phone number">
+                        <input 
+                          matInput 
+                          formControlName="phone" 
+                          placeholder="Enter your phone number"
+                          (input)="onPhoneInput($event)"
+                          maxlength="14">
                         <mat-icon matSuffix>phone</mat-icon>
+                        <mat-error *ngIf="profileForm.get('phone')?.hasError('invalidPhone')">
+                          Phone number can only contain digits, spaces, hyphens, parentheses, and plus sign
+                        </mat-error>
+                        <mat-error *ngIf="profileForm.get('phone')?.hasError('phoneLength')">
+                          Phone number must be between 10 and 15 digits
+                        </mat-error>
                       </mat-form-field>
                     </div>
 
@@ -140,6 +160,10 @@ import { AuthService, User } from '../auth/auth.service';
                           placeholder="Tell us about yourself">
                         </textarea>
                         <mat-icon matSuffix>description</mat-icon>
+                        <mat-hint align="end">{{profileForm.get('bio')?.value?.length || 0}}/500</mat-hint>
+                        <mat-error *ngIf="profileForm.get('bio')?.hasError('maxlength')">
+                          Bio must be less than 500 characters
+                        </mat-error>
                       </mat-form-field>
                     </div>
 
@@ -330,6 +354,7 @@ export class ProfileComponent implements OnInit, OnDestroy {
   passwordForm: FormGroup;
   
   private destroy$ = new Subject<void>();
+  private formInitialized = false;
   isUpdating = false;
   isChangingPassword = false;
   hideCurrentPassword = true;
@@ -351,13 +376,14 @@ export class ProfileComponent implements OnInit, OnDestroy {
     this.currentUser$.pipe(
       takeUntil(this.destroy$)
     ).subscribe(user => {
-      if (user) {
+      if (user && !this.formInitialized) {
         this.profileForm.patchValue({
           fullName: user.fullName || '',
           email: user.email || '',
           phone: user.phone || '',
           bio: user.bio || ''
         });
+        this.formInitialized = true;
       }
     });
   }
@@ -369,12 +395,87 @@ export class ProfileComponent implements OnInit, OnDestroy {
 
   private createProfileForm(): FormGroup {
     return this.fb.group({
-      fullName: ['', [Validators.required]],
-      email: ['', [Validators.required, Validators.email]],
-      phone: [''],
-      bio: ['']
+      fullName: ['', [Validators.required, this.nameValidator]],
+      email: ['', [Validators.required, this.emailValidator]],
+      phone: ['', [this.phoneValidator]],
+      bio: ['', [Validators.maxLength(500)]]
     });
   }
+
+  // Custom validator for full name (only letters, spaces, apostrophes, hyphens)
+  private nameValidator: ValidatorFn = (control: AbstractControl) => {
+    if (!control.value || control.value.trim() === '') {
+      return null; // Let required validator handle empty values
+    }
+    
+    const namePattern = /^[a-zA-Z\s'-]+$/;
+    const isValid = namePattern.test(control.value.trim());
+    
+    if (!isValid) {
+      return { invalidName: true };
+    }
+    
+    // Check for reasonable length
+    if (control.value.trim().length < 2) {
+      return { nameTooShort: true };
+    }
+    
+    if (control.value.trim().length > 50) {
+      return { nameTooLong: true };
+    }
+    
+    return null;
+  };
+
+  // Enhanced email validator
+  private emailValidator: ValidatorFn = (control: AbstractControl) => {
+    if (!control.value || control.value.trim() === '') {
+      return null; // Let required validator handle empty values
+    }
+    
+    const emailPattern = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+    const isValid = emailPattern.test(control.value.trim());
+    
+    if (!isValid) {
+      return { invalidEmail: true };
+    }
+    
+    // Additional checks
+    const email = control.value.trim().toLowerCase();
+    
+    // Check for common typos in domains
+    const commonDomains = ['gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com', 'aol.com'];
+    const domain = email.split('@')[1];
+    
+    if (domain && domain.includes('..')) {
+      return { invalidEmail: true };
+    }
+    
+    return null;
+  };
+
+  // Phone number validator (numbers only, with optional formatting)
+  private phoneValidator: ValidatorFn = (control: AbstractControl) => {
+    if (!control.value || control.value.trim() === '') {
+      return null; // Phone is optional
+    }
+    
+    // Remove all non-digit characters for validation
+    const digitsOnly = control.value.replace(/\D/g, '');
+    
+    // Check if it contains only digits and common separators
+    const phonePattern = /^[\d\s\-\(\)\+\.]+$/;
+    if (!phonePattern.test(control.value)) {
+      return { invalidPhone: true };
+    }
+    
+    // Check digit count (adjust range as needed for international numbers)
+    if (digitsOnly.length < 10 || digitsOnly.length > 15) {
+      return { phoneLength: true };
+    }
+    
+    return null;
+  };
 
   private createPasswordForm(): FormGroup {
     const form = this.fb.group({
@@ -400,13 +501,28 @@ export class ProfileComponent implements OnInit, OnDestroy {
   };
 
   updateProfile(): void {
+    console.log('Update Profile clicked!');
+    console.log('Form valid:', this.profileForm.valid);
+    console.log('Form values:', this.profileForm.value);
+    console.log('Form errors:', this.profileForm.errors);
+    
+    // Check individual field errors
+    Object.keys(this.profileForm.controls).forEach(key => {
+      const control = this.profileForm.get(key);
+      if (control && control.errors) {
+        console.log(`${key} errors:`, control.errors);
+      }
+    });
+
     if (this.profileForm.valid) {
       this.isUpdating = true;
       
       const updatedProfile = this.profileForm.value;
+      console.log('Sending updated profile:', updatedProfile);
       
       this.authService.updateUserProfile(updatedProfile).subscribe({
         next: (success) => {
+          console.log('Update result:', success);
           this.isUpdating = false;
           if (success) {
             this.snackBar.open('Profile updated successfully!', 'Close', {
@@ -420,13 +536,20 @@ export class ProfileComponent implements OnInit, OnDestroy {
             });
           }
         },
-        error: () => {
+        error: (error) => {
+          console.error('Update error:', error);
           this.isUpdating = false;
           this.snackBar.open('An error occurred. Please try again.', 'Close', {
             duration: 3000,
             panelClass: ['error-snackbar']
           });
         }
+      });
+    } else {
+      console.log('Form is invalid, cannot update profile');
+      this.snackBar.open('Please fix the form errors before submitting.', 'Close', {
+        duration: 3000,
+        panelClass: ['error-snackbar']
       });
     }
   }
@@ -559,6 +682,8 @@ export class ProfileComponent implements OnInit, OnDestroy {
           phone: user.phone || '',
           bio: user.bio || ''
         });
+        // Mark form as dirty to show changes after reset
+        this.profileForm.markAsDirty();
       }
     });
   }
@@ -572,5 +697,21 @@ export class ProfileComponent implements OnInit, OnDestroy {
 
   goBack(): void {
     this.router.navigate(['/dashboard']);
+  }
+
+  // Helper method to format phone number as user types
+  onPhoneInput(event: Event): void {
+    const input = event.target as HTMLInputElement;
+    let value = input.value.replace(/\D/g, ''); // Remove all non-digits
+    
+    // Format as (XXX) XXX-XXXX for US numbers
+    if (value.length >= 6) {
+      value = `(${value.slice(0, 3)}) ${value.slice(3, 6)}-${value.slice(6, 10)}`;
+    } else if (value.length >= 3) {
+      value = `(${value.slice(0, 3)}) ${value.slice(3)}`;
+    }
+    
+    // Update the form control
+    this.profileForm.get('phone')?.setValue(value);
   }
 } 
